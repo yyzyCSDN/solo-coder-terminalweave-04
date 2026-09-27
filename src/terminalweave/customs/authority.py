@@ -12,27 +12,47 @@ class AuthorityMessage:
     message_type: str
     issued_at: datetime
     supersedes: str | None = None
+    manifest_version: int | None = None
 
     def __post_init__(self):
         object.__setattr__(self, 'issued_at', ensure_utc(self.issued_at))
 
 class AuthorityInbox:
+    """Stores official messages and derives the effective set.
+
+    Ingestion is idempotent and independent of arrival order: replaying an
+    identical message is a no-op, and a superseding message may arrive before
+    the message it replaces. The effective set is computed from message
+    content and issue time only, so out-of-order replays converge to the same
+    state instead of accumulating duplicates.
+    """
 
     def __init__(self):
         self.messages: dict[str, AuthorityMessage] = {}
 
     def ingest(self, m: AuthorityMessage) -> None:
-        if m.message_id in self.messages:
-            raise ValidationError('duplicate authority message')
-        if m.supersedes and m.supersedes not in self.messages:
-            raise ValidationError('superseded message not found')
+        existing = self.messages.get(m.message_id)
+        if existing is not None:
+            if existing == m:
+                return
+            raise ValidationError('conflicting authority message')
         if m.supersedes:
-            old = self.messages[m.supersedes]
-            if old.container_id != m.container_id or old.authority != m.authority:
-                raise ValidationError('supersession scope mismatch')
-            if m.issued_at <= old.issued_at:
-                raise ValidationError('superseding message must be newer')
+            if m.supersedes == m.message_id:
+                raise ValidationError('message cannot supersede itself')
+            old = self.messages.get(m.supersedes)
+            if old is not None:
+                self._check_supersession(old, m)
+        for other in self.messages.values():
+            if other.supersedes == m.message_id:
+                self._check_supersession(m, other)
         self.messages[m.message_id] = m
+
+    @staticmethod
+    def _check_supersession(old: AuthorityMessage, new: AuthorityMessage) -> None:
+        if old.container_id != new.container_id or old.authority != new.authority:
+            raise ValidationError('supersession scope mismatch')
+        if new.issued_at <= old.issued_at:
+            raise ValidationError('superseding message must be newer')
 
     def effective(self, container_id: str) -> tuple[AuthorityMessage, ...]:
         superseded = {m.supersedes for m in self.messages.values() if m.supersedes}
@@ -41,4 +61,4 @@ class AuthorityInbox:
 
     def latest(self, container_id: str, authority: str, message_type: str) -> AuthorityMessage | None:
         values = [m for m in self.effective(container_id) if m.authority == authority and m.message_type == message_type]
-        return max(values, key=lambda x: x.issued_at) if values else None
+        return max(values, key=lambda x: (x.issued_at, x.message_id)) if values else None
