@@ -23,7 +23,10 @@ class ReleaseQueue:
         self._processed: set[str] = set()
 
     def submit(self, r: ReleaseRequest) -> None:
-        if r.request_id in self._requests:
+        existing = self._requests.get(r.request_id)
+        if existing is not None:
+            if existing == r:
+                return
             raise ValidationError('duplicate release request')
         self._requests[r.request_id] = r
 

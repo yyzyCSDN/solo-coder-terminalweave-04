@@ -22,9 +22,12 @@ class HoldRecord:
     released_by: str | None = None
     revision: int = 1
     history: list[tuple[int, str, str]] = field(default_factory=list)
+    manifest_version: int | None = None
 
     def __post_init__(self) -> None:
         self.created_at = ensure_utc(self.created_at)
+        if self.manifest_version is not None and self.manifest_version < 1:
+            raise ValidationError('manifest version must be positive')
         self.history.append((self.revision, self.state.value, 'created'))
 
 class CustomsLedger:

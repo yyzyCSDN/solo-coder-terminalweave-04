@@ -41,7 +41,10 @@ class InspectionScheduler:
         self.items: dict[str, Inspection] = {}
 
     def request(self, item: Inspection) -> None:
-        if item.inspection_id in self.items:
+        existing = self.items.get(item.inspection_id)
+        if existing is not None:
+            if existing.container_id == item.container_id and existing.requested_at == item.requested_at:
+                return
             raise ValidationError('duplicate inspection')
         self.items[item.inspection_id] = item
 
